@@ -5,8 +5,8 @@ import ast
 import os
 
 # --- Config ---
-adata_path = "tahoe_data/plate2_filt_Vevo_Tahoe100M_WServicesFrom_ParseGigalab.h5ad"
-plate = "plate2"
+adata_path = "tahoe_data/plate14_filt_Vevo_Tahoe100M_WServicesFrom_ParseGigalab.h5ad"
+plate = "plate14"
 summary_path = "tahoe_data/summary.csv"
 output_path = f"tahoe_data/{plate}_DMSO_Dinaciclib_A549_HT-29.h5ad"
 
