@@ -1,0 +1,10 @@
+name: ccvi_cluster_env
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - numpy
+  - pandas
+  - scanpy
+  - anndata
+  - scvi-tools
