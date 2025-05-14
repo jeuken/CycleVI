@@ -4,20 +4,37 @@ import numpy as np
 import ast
 import os
 
+os.chdir("/Users/piamozdzanowski/Documents/GitHub/PerturbCycleVI")
+
+
 # --- Config ---
-adata_path = "tahoe_data/plate14_filt_Vevo_Tahoe100M_WServicesFrom_ParseGigalab.h5ad"
-plate = "plate14"
+adata_path = "tahoe_data/plate13_filt_Vevo_Tahoe100M_WServicesFrom_ParseGigalab.h5ad"
+plate = "plate13"
 summary_path = "tahoe_data/summary.csv"
-output_path = f"tahoe_data/{plate}_DMSO_Dinaciclib_A549_HT-29.h5ad"
+output_path = f"tahoe_data/{plate}_irinotecan_HT29.h5ad"
 
 # --- Step 1: Load metadata ---
 adata_obs = sc.read_h5ad(adata_path, backed='r').obs
 
+# --- Step X: Count and sort drugs by number of treated cells ---
+drug_counts = (
+    adata_obs["drug"]
+    .value_counts()
+    .reset_index()
+    .rename(columns={"index": "drug", "drug": "cell_count"})
+    .sort_values("count", ascending=False)
+)
+
+print("Top drugs by treated cell count:")
+print(drug_counts[0:40])
+
+
+
 # --- Step 2: Filter metadata ---
 filtered_obs = adata_obs[
-    adata_obs['drug'].isin(['DMSO_TF', 'Dinaciclib']) &
-    adata_obs['cell_name'].isin(['A549', 'HT-29'])
-]
+    adata_obs['drug'].isin(['DMSO_TF','Irinotecan (hydrochloride)']) &
+    adata_obs['cell_name'].isin([
+    "HT-29",])]
 
 if filtered_obs.empty:
     print("No cells found matching the filter criteria.")
@@ -48,3 +65,4 @@ if os.path.exists(summary_path):
 
 summary_df.to_csv(summary_path, index=False)
 print(f"Updated summary file at {summary_path}")
+
