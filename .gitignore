@@ -4,3 +4,4 @@ tahoe_data/
 /cluster_files
 PerturbCycleVI/adata_Dapagliflozin_balanced.h5ad
 PerturbCycleVI/adata_Dinaciclib_balanced.h5ad
+/benchmark_data
