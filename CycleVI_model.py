@@ -4,7 +4,7 @@
 
 import logging
 import warnings
-from collections.abc import Iterator
+from collections.abc import Iterator, Iterable
 from functools import partial
 from numbers import Number
 from typing import Callable, Literal
@@ -79,18 +79,18 @@ logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────
-# Creating cell cycle gene mask
+# Optional: Creating cell cycle gene mask
 # ─────────────────────────────────────────────────────────────
 
-def create_cell_cycle_gene_mask(adata: AnnData, gene_list_txt: str, var_column: str = None) -> torch.Tensor:
+def create_cell_cycle_gene_mask(adata: AnnData, genes_txt: str, var_column: str = None) -> torch.Tensor:
     """
-    Create a boolean mask indicating which genes are cell cycle–related.
+    Create a boolean mask indicating which genes are cell cycle–dependent.
 
     Parameters
     ----------
     adata : AnnData
         The AnnData object containing single-cell expression data.
-    gene_list_txt : str
+    genes_txt : str
         Path to a text file with a list of cell cycle genes (one per line).
     var_column : str, optional
         Name of a column in adata.var to use for gene identifiers.
@@ -102,7 +102,7 @@ def create_cell_cycle_gene_mask(adata: AnnData, gene_list_txt: str, var_column: 
         A boolean tensor of shape (n_genes,) where True indicates
         that the gene is in the cell cycle gene list.
     """
-    gene_list = pd.read_csv(gene_list_txt, header=None)[0].str.upper().tolist()
+    gene_list = pd.read_csv(genes_txt, header=None)[0].str.upper().tolist()
     gene_set = set(gene_list)
 
     if var_column:
@@ -113,10 +113,18 @@ def create_cell_cycle_gene_mask(adata: AnnData, gene_list_txt: str, var_column: 
     return torch.tensor([g in gene_set for g in genes], dtype=torch.bool)
     
     # Example usage:
-    # Load cell cycle mask from the provided annotation file
+    # Load cell cycle mask from the provided GO annotation file
     # cycle_mask = create_cell_cycle_gene_mask(adata, "GO_cell_cycle_annotation_human.txt")
     
 
+# ─────────────────────────────────────────────────────────────
+# Cell Cycle Registry Keys
+# ─────────────────────────────────────────────────────────────
+
+class CYCLE_REGISTRY_KEYS:
+    CYCLE_LABEL_KEY = "cycle_initiation_label"
+    CYCLE_ANGLE_KEY  = "cycle_initiation_angle"
+    
 # ─────────────────────────────────────────────────────────────
 # Adversarial Classifier
 # ─────────────────────────────────────────────────────────────
@@ -152,7 +160,7 @@ class Classifier(nn.Module):
 
 class PhaseAdversarialTrainingPlan(TrainingPlan):
     """
-    Training plan with adversarial phase classifier to prevent phase information
+    Training plan with adversarial phase classifier to prevent cycle phase information
     leakage in non-circular latent space (z_other).
 
     Args:
@@ -252,7 +260,7 @@ class PhaseAdversarialTrainingPlan(TrainingPlan):
         kappa = 1 - self.kl_weight if self.scale_adversarial_loss == "auto" else self.scale_adversarial_loss
 
         # Assume phase is the first categorical covariate
-        batch_cat = batch[REGISTRY_KEYS.CAT_COVS_KEY][:, 0]
+        batch_cat = batch[CYCLE_REGISTRY_KEYS.CYCLE_LABEL_KEY].long().squeeze(-1)
 
         opt1, opt2 = self.optimizers() if isinstance(self.optimizers(), list) else (self.optimizers(), None)
 
@@ -317,7 +325,6 @@ class PhaseAdversarialTrainingPlan(TrainingPlan):
 # ─────────────────────────────────────────────────────────────
 # Decoder
 # ─────────────────────────────────────────────────────────────
-
 class DecoderCycleVI(nn.Module):
     """
     Custom decoder for CycleVI model that separates gene expression into:
@@ -329,21 +336,24 @@ class DecoderCycleVI(nn.Module):
         n_output (int): Number of output genes.
         n_layers (int): Number of hidden layers in the feedforward decoder.
         n_hidden (int): Width of each hidden layer.
-        n_cat_list (list[int], optional): Ignored (included for compatibility).
-        inject_covariates (bool): Unused here (compatibility).
+        n_cat_list: A list containing the number of categories
+        for each category of interest. Each category will be
+        included using a one-hot encoding
+        inject_covariates (bool): Whether to inject covariates in FCLayers.
         use_batch_norm (bool): Whether to apply batch normalization.
         use_layer_norm (bool): Whether to apply layer normalization.
-        scale_activation (str): Activation for output, 'softmax' or 'softplus'.
-        cycle_gene_mask (torch.Tensor): Boolean mask over genes that are cell cycle–regulated.
-        n_fourier (int): Number of Fourier harmonics to use for cyclic signal.
+        scale_activation (str): 'softmax' or 'softplus' for output.
+        cycle_gene_mask (torch.Tensor): Boolean mask over cycle-regulated genes.
+        n_fourier (int): Number of Fourier harmonics for cyclic signal.
     """
+    
     def __init__(
         self,
         n_input: int,
         n_output: int,
         n_layers: int = 1,
         n_hidden: int = 128,
-        n_cat_list: list[int] = None,
+        n_cat_list: Iterable[int] = None,
         inject_covariates: bool = True,
         use_batch_norm: bool = False,
         use_layer_norm: bool = False,
@@ -354,28 +364,25 @@ class DecoderCycleVI(nn.Module):
     ):
         super().__init__()
 
-        # Default: assume all genes are cycle-regulated
         if cycle_gene_mask is None:
             cycle_gene_mask = torch.ones(n_output, dtype=torch.bool)
         elif cycle_gene_mask.shape[0] != n_output:
             raise ValueError("`cycle_gene_mask` must match n_output")
 
-        # Save cycle mask as non-trainable buffer
         self.register_buffer("cycle_mask", cycle_gene_mask.float())
         self.n_output = n_output
         self.n_fourier = n_fourier
 
         # Feedforward decoder for non-cycle component (takes z_latent only)
         self.non_cycle_fc = FCLayers(
-            n_in=n_input - 2,  # Remove 2D z_cycle
+            n_in=n_input - 2,          # exclude 2D z_cycle
             n_out=n_hidden,
-            n_cont=0,
-            n_cat_list=None,
+            n_cat_list=n_cat_list,
             n_layers=n_layers,
             n_hidden=n_hidden,
             use_batch_norm=use_batch_norm,
             use_layer_norm=use_layer_norm,
-            inject_covariates=False,
+            inject_covariates=True,
             activation_fn=nn.ReLU,
             use_activation=True,
             bias=True,
@@ -385,7 +392,7 @@ class DecoderCycleVI(nn.Module):
         # Fourier weights for periodic expression modulation
         self.fourier_W = nn.Parameter(0.01 * torch.randn(2 * n_fourier, n_output))
 
-        # Apply gradient masking so only cycle genes get updated via Fourier weights
+        # Gradient mask so only cycle genes get updated via Fourier weights
         grad_mask = torch.zeros_like(self.fourier_W)
         grad_mask[:, cycle_gene_mask] = 1.0
         self.fourier_W.register_hook(lambda grad: grad * grad_mask.to(grad.device))
@@ -393,17 +400,17 @@ class DecoderCycleVI(nn.Module):
         # Raw dispersion parameter for Negative Binomial model
         self.disp_raw = nn.Parameter(0.01 * torch.randn(n_output))
 
-        # Output activation: softmax (normalized proportions) or softplus (non-negative rates)
+        # Output activation
         self.px_scale_activation = (
             nn.Softmax(dim=-1) if scale_activation == "softmax" else nn.Softplus()
         )
-
+        
     def forward(
         self,
         z: torch.Tensor,           # Latent vector [N, latent_dim]
         library: torch.Tensor,     # Log-library size [N, 1]
-        t: torch.Tensor,           # Cell labels (not used here)
-        remove_cell_cycle: bool = False  # Disable cyclic modulation if True
+        remove_cell_cycle: bool = False,  # Disable cyclic modulation if True
+        *cat_list: int,
     ):
         # Split latent space: z_cycle (2D) and z_latent (rest)
         z_cycle = z[..., 0:2]
@@ -411,7 +418,7 @@ class DecoderCycleVI(nn.Module):
 
         # Feedforward decoder for baseline gene expression
         x_input = z_latent
-        x = self.non_cycle_fc(x_input)
+        x = self.non_cycle_fc(x_input,*cat_list)
         non_cycle_out = self.non_cycle_linear(x)
 
         # Convert 2D z_cycle into phase angle θ
@@ -450,9 +457,7 @@ class DecoderCycleVI(nn.Module):
             None,             # placeholder
             non_cycle_out     # non-cyclic output (for debugging)
         )
-
-
-
+    
 # ─────────────────────────────────────────────────────────────
 # VAE
 # ─────────────────────────────────────────────────────────────
@@ -532,6 +537,7 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         # Encoder Setup
         # ─────────────────────────────────────────────────────────────
 
+        
         # Determine normalization configuration
         use_bn_enc = use_batch_norm in ["encoder", "both"]
         use_bn_dec = use_batch_norm in ["decoder", "both"]
@@ -539,17 +545,16 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         use_ln_dec = use_layer_norm in ["decoder", "both"]
 
         # Compute encoder input dimension
-        n_input_encoder = n_input + (n_continuous_cov if encode_covariates else 0)
-        if batch_representation == "embedding" and encode_covariates:
-            n_input_encoder += batch_dim
-
-        # Prepare categorical covariate structure
-        if batch_representation == "embedding":
-            cat_list = [] if n_cats_per_cov is None else list(n_cats_per_cov)
+        n_input_encoder = n_input + n_continuous_cov * encode_covariates
+        if self.batch_representation == "embedding":
+            n_input_encoder += batch_dim * encode_covariates
+            cat_list = list([] if n_cats_per_cov is None else n_cats_per_cov)
         else:
-            cat_list = [n_batch] + ([] if n_cats_per_cov is None else list(n_cats_per_cov))
+            cat_list = [n_batch] + list([] if n_cats_per_cov is None else n_cats_per_cov)
 
         encoder_cat_list = cat_list if encode_covariates else None
+        _extra_encoder_kwargs = extra_encoder_kwargs or {}
+     
 
         self.z_encoder = Encoder(
             n_input=n_input_encoder,
@@ -564,7 +569,7 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
             use_layer_norm=use_ln_enc,
             var_activation=var_activation,
             return_dist=True,
-            **(extra_encoder_kwargs or {}),
+            **_extra_encoder_kwargs,
         )
 
         # ─────────────────────────────────────────────────────────────
@@ -572,22 +577,23 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         # ─────────────────────────────────────────────────────────────
 
         # Decoder input: z + optional batch embedding
-        n_input_decoder = n_latent
+        n_input_decoder = n_latent + n_continuous_cov
         if batch_representation == "embedding":
             n_input_decoder += batch_dim
-
+        
+        _extra_decoder_kwargs = extra_decoder_kwargs or {}
         self.decoder = DecoderCycleVI(
             n_input=n_input_decoder,
             n_output=n_input,
-            n_cell_types=n_labels,
             n_layers=n_layers,
             n_hidden=n_hidden,
-            inject_covariates=deeply_inject_covariates,
+            n_cat_list=cat_list,
             use_batch_norm=use_bn_dec,
             use_layer_norm=use_ln_dec,
+            inject_covariates=deeply_inject_covariates,
             scale_activation="softplus" if use_size_factor_key else "softmax",
             cycle_gene_mask=cycle_gene_mask,
-            **(extra_decoder_kwargs or {}),
+            **_extra_decoder_kwargs,
         )
 
     # ─────────────────────────────────────────────────────────────
@@ -650,6 +656,7 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
             MODULE_KEYS.CONT_COVS_KEY: tensors.get(REGISTRY_KEYS.CONT_COVS_KEY, None),
             MODULE_KEYS.CAT_COVS_KEY: tensors.get(REGISTRY_KEYS.CAT_COVS_KEY, None),
             MODULE_KEYS.SIZE_FACTOR_KEY: size_factor,
+
         }
 
     # ─────────────────────────────────────────────────────────────
@@ -780,40 +787,76 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
     # ─────────────────────────────────────────────────────────────
     # Decodes latent z back to gene expression
     # ─────────────────────────────────────────────────────────────
-    
     def generative(
         self,
-        z: torch.Tensor,
-        library: torch.Tensor,
-        batch_index: torch.Tensor,
-        cont_covs: torch.Tensor | None = None,
-        cat_covs: torch.Tensor | None = None,
-        size_factor: torch.Tensor | None = None,
-        y: torch.Tensor | None = None,
-        transform_batch: torch.Tensor | None = None,
-        remove_cell_cycle: bool = False,  # New argument
-    ) -> dict[str, Distribution | None]:
+        z,
+        library,
+        batch_index,
+        cont_covs=None,
+        cat_covs=None,
+        size_factor=None,
+        y=None,
+        transform_batch=None,
+        remove_cell_cycle: bool = False,
+    ):
         from scvi.distributions import NegativeBinomial, Normal, Poisson, ZeroInflatedNegativeBinomial
+        # 1. Build decoder_input = [z (+ cont_covs)]
+        if cont_covs is None:
+            decoder_input = z
+        elif z.dim() != cont_covs.dim():
+            decoder_input = torch.cat(
+                [z, cont_covs.unsqueeze(0).expand(z.size(0), -1, -1)], dim=-1
+            )
+        else:
+            decoder_input = torch.cat([z, cont_covs], dim=-1)
     
-        t = y.squeeze(-1)
-    
-        decoder_input = z
+        # 2. Add batch *embedding* if we're in embedding mode
         if self.batch_representation == "embedding":
             batch_rep = self.compute_embedding(REGISTRY_KEYS.BATCH_KEY, batch_index)
-            decoder_input = torch.cat([z, batch_rep], dim=-1)
+            # make dims match if we're in MC-sampling mode (z can be [n_samples, n_cells, ...])
+            if decoder_input.dim() != batch_rep.dim():
+                batch_rep = batch_rep.unsqueeze(0).expand(decoder_input.size(0), -1, -1)
+            decoder_input = torch.cat([decoder_input, batch_rep], dim=-1)
+            # IMPORTANT: in this mode, batch is NOT part of n_cat_list
     
+        # 3. Build categorical inputs for FCLayers
+        #    Start with any categorical covariates from setup_anndata(...)
+        if cat_covs is not None:
+            categorical_input = torch.split(cat_covs, 1, dim=1)
+        else:
+            categorical_input = ()
+    
+        # If batch is represented as one-hot (not embedding), it *is* part of n_cat_list
+        if self.batch_representation == "one-hot":
+            categorical_input = (batch_index, *categorical_input)
+    
+        # 4. Handle transform_batch (same as scVI: override batch_index used for dispersion/priors)
         if transform_batch is not None:
             batch_index = torch.ones_like(batch_index) * transform_batch
     
+        # 5. size_factor / library handling
         if not self.use_size_factor_key:
-            size_factor = library
+            size_factor = library  # scVI uses observed lib size unless overridden
     
-        # Pass remove_cell_cycle to decoder
-        px_scale, disp, px_rate, _, angle, radius, _, W_fourier, _, baseline = self.decoder(
-            decoder_input, size_factor, t, remove_cell_cycle=remove_cell_cycle
+        # 6. Run the decoder
+        (
+            px_scale,
+            disp,
+            px_rate,
+            _,
+            angle,
+            radius,
+            _,
+            W_fourier,
+            _,
+            baseline,
+        ) = self.decoder(
+            decoder_input,
+            size_factor,
+            remove_cell_cycle,
+            *categorical_input,
         )
 
-    
         px_r = torch.exp(disp)
     
         if self.gene_likelihood == "zinb":
@@ -879,8 +922,7 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         radius = torch.sqrt(x_latent**2 + y_latent**2 + 1e-6)
     
         # G2M and S scores from continuous covariates
-        cont_covs = tensors[REGISTRY_KEYS.CONT_COVS_KEY]
-        target_angle = cont_covs[:, 0]
+        target_angle = tensors[CYCLE_REGISTRY_KEYS.CYCLE_ANGLE_KEY].squeeze(-1)
     
         # Angle loss (squared angular distance)
         delta_angle = angle - target_angle
@@ -891,8 +933,8 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         
         # Weighted loss terms
         weighted_kl_local = kl_weight * kl_divergence_z + kl_divergence_l
-        cycle_pos_weight = 100 * (1.0 - kl_weight)**2
-        weighted_angle_loss = cycle_pos_weight * angle_loss
+        cycle_pos_weight = 100 * (1.0 - kl_weight)**4
+        weighted_angle_loss = 0.5 * cycle_pos_weight * angle_loss
         weighted_radius_penalty = 100 * (kl_weight**2)*radius_penalty
     
         # Total loss
@@ -1044,7 +1086,6 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
 # ─────────────────────────────────────────────────────────────
 # Model
 # ─────────────────────────────────────────────────────────────
-
 class CycleVI(EmbeddingMixin,        
     RNASeqMixin,                  
     VAEMixin,                     
@@ -1174,20 +1215,24 @@ class CycleVI(EmbeddingMixin,
     # Register data with scvi-tools (what to read from AnnData and where)
     # ─────────────────────────────────────────────
     @classmethod
-    @setup_anndata_dsp.dedent  # Automatically formats docstring from template
+    @setup_anndata_dsp.dedent
     def setup_anndata(
         cls,
         adata: AnnData,
-        layer: str | None = None,  # Which layer of AnnData.X to use
-        batch_key: str | None = None,  # Batch annotation column in adata.obs
-        labels_key: str | None = None,  # Label annotation column
-        size_factor_key: str | None = None,  # Precomputed size factor
-        categorical_covariate_keys: list[str] | None = None,  # Categorical covariates
-        continuous_covariate_keys: list[str] | None = None,   # Continuous covariates
+        layer: str | None = None,
+        batch_key: str | None = None,
+        labels_key: str | None = None,
+        size_factor_key: str | None = None,
+        categorical_covariate_keys: list[str] | None = None,
+        continuous_covariate_keys: list[str] | None = None,
+        # NEW:
+        cycle_initiation_label_key: str | None = None,   # e.g. "phase"
+        cycle_initiation_angle_key: str | None = None,   # e.g. "cycle_angle_uniform"
         **kwargs,
     ):
-        """%(summary)s.
-
+        """
+        Register AnnData fields for CycleVI.
+    
         Parameters
         ----------
         %(param_adata)s
@@ -1197,33 +1242,39 @@ class CycleVI(EmbeddingMixin,
         %(param_size_factor_key)s
         %(param_cat_cov_keys)s
         %(param_cont_cov_keys)s
+    
+        Notes
+        -----
+        Phase inputs are registered separately and NOT injected as covariates:
+          - phase labels -> CYCLE_REGISTRY_KEYS.CYCLE_LABEL_KEY
+          - phase angle  -> CYCLE_REGISTRY_KEYS.CYCLE_ANGLE_KEY
         """
 
-        # Get arguments as a dictionary
         setup_method_args = cls._get_setup_method_args(**locals())
 
-        # Define how to extract relevant fields from AnnData
         anndata_fields = [
             LayerField(REGISTRY_KEYS.X_KEY, layer, is_count_data=True),
             CategoricalObsField(REGISTRY_KEYS.BATCH_KEY, batch_key),
             CategoricalObsField(REGISTRY_KEYS.LABELS_KEY, labels_key),
             NumericalObsField(REGISTRY_KEYS.SIZE_FACTOR_KEY, size_factor_key, required=False),
+
+            # regular covs (kept separate from phase)
             CategoricalJointObsField(REGISTRY_KEYS.CAT_COVS_KEY, categorical_covariate_keys),
             NumericalJointObsField(REGISTRY_KEYS.CONT_COVS_KEY, continuous_covariate_keys),
+
+            # NEW: *separate* phase inputs
+            CategoricalObsField(CYCLE_REGISTRY_KEYS.CYCLE_LABEL_KEY, cycle_initiation_label_key),
+            NumericalObsField(CYCLE_REGISTRY_KEYS.CYCLE_ANGLE_KEY, cycle_initiation_angle_key),
+
+
         ]
 
-        # If this is a "minified" AnnData, add extra required fields
         adata_minify_type = _get_adata_minify_type(adata)
         if adata_minify_type is not None:
             anndata_fields += cls._get_fields_for_adata_minification(adata_minify_type)
 
-        # Create a manager to track and validate all fields
         adata_manager = AnnDataManager(fields=anndata_fields, setup_method_args=setup_method_args)
-
-        # Register fields into the manager
         adata_manager.register_fields(adata, **kwargs)
-
-        # Register the manager for this class (global to model)
         cls.register_manager(adata_manager)
 
     @torch.inference_mode()
@@ -1385,4 +1436,3 @@ class CycleVI(EmbeddingMixin,
         )
     
         return result
-
