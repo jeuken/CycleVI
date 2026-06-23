@@ -33,7 +33,7 @@ Before running anything, make sure your data meets these expectations:
 
 - **Raw counts**, not normalized or log-transformed values. CycleVI models counts directly; the matrix should contain integer-like UMI/read counts.
 - **Cells as rows, genes as columns** (the standard AnnData orientation). If your matrix is the other way round, add `--transpose`.
-- **Gene names as `var_names`** — either gene symbols (e.g. `MKI67`) or Ensembl IDs (e.g. `ENSG00000148773`). CycleVI detects which you have automatically and matches the correct built-in cell cycle marker list. Human data works out of the box; for other organisms supply your own marker lists (see [`prepare`](#cyclevi-prepare)).
+- **Gene names as `var_names`** — either gene symbols (e.g. `MKI67`) or Ensembl IDs (e.g. `ENSG00000148773`) work automatically, and CycleVI detects which one you and matches the correct built-in cell cycle marker list. Human data works out of the box; for other organisms, or other gene ID schemes, supply your own marker lists (see [`prepare`](#cyclevi-prepare)).
 
 Standard quality-control filtering (removing low-count cells and rarely-expressed genes) before running CycleVI is recommended, just as for any scRNA-seq workflow.
 
