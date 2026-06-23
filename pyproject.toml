@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cyclevi"
+version = "0.2.0"
+description = "CycleVI: Isolating cell cycle variation with an interpretable deep generative model"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Pia Mozdzanowski" },
+    { name = "Gustavo S. Jeuken" },
+]
+keywords = ["single-cell", "cell cycle", "variational autoencoder", "scRNA-seq", "deep learning"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: BSD License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.0",
+    "numpy>=1.23",
+    "pandas>=1.5",
+    "anndata>=0.9",
+    "scanpy>=1.9",
+    "scipy>=1.7",
+    "scikit-learn>=1.0",
+    "scvi-tools>=1.2",
+    "click>=8.0",
+]
+
+[project.scripts]
+cyclevi = "cyclevi.cli:cli"
+
+[project.urls]
+Homepage = "https://github.com/jeuken/CycleVI"
+"Bug Tracker" = "https://github.com/jeuken/CycleVI/issues"
+Preprint = "https://doi.org/10.1101/2025.11.04.686009"
+
+[tool.setuptools.packages.find]
+include = ["cyclevi*"]
+
+[tool.setuptools.package-data]
+"cyclevi.data" = ["*.csv", "*.txt"]
