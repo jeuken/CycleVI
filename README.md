@@ -286,6 +286,6 @@ If you use CycleVI in a publication, please cite:
 >
 > Pia Mozdzanowski, Marcel Tarbier, Gustavo S. Jeuken
 >
-> bioRxiv 2025.11.04.686009; doi: https://doi.org/10.1101/2025.11.04.686009
+> Bioinformatics, Volume 42, Issue 6, June 2026, btag372, https://doi.org/10.1093/bioinformatics/btag372
 </content>
 </invoke>
