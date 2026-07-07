@@ -7,7 +7,7 @@ In practice, CycleVI gives you two things for every cell:
 - a **cell cycle angle** — a continuous coordinate describing where the cell sits in the cycle, and
 - a **cell cycle-free embedding** — a representation you can use in place of PCA for everything downstream.
 
-> **Preprint:** [CycleVI: Isolating cell cycle variation with an interpretable deep generative model](https://doi.org/10.1101/2025.11.04.686009)
+> **Publication:** [CycleVI: Isolating cell cycle variation with an interpretable deep generative model](https://doi.org/10.1093/bioinformatics/btag372)
 
 ---
 
