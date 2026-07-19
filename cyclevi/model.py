@@ -77,46 +77,6 @@ def _identity(x):
 # Logger setup
 logger = logging.getLogger(__name__)
 
-
-# ─────────────────────────────────────────────────────────────
-# Optional: Creating cell cycle gene mask
-# ─────────────────────────────────────────────────────────────
-
-def create_cell_cycle_gene_mask(adata: AnnData, genes_txt: str, var_column: str = None) -> torch.Tensor:
-    """
-    Create a boolean mask indicating which genes are cell cycle–dependent.
-
-    Parameters
-    ----------
-    adata : AnnData
-        The AnnData object containing single-cell expression data.
-    genes_txt : str
-        Path to a text file with a list of cell cycle genes (one per line).
-    var_column : str, optional
-        Name of a column in adata.var to use for gene identifiers.
-        If None, use adata.var_names (default).
-
-    Returns
-    -------
-    torch.Tensor
-        A boolean tensor of shape (n_genes,) where True indicates
-        that the gene is in the cell cycle gene list.
-    """
-    gene_list = pd.read_csv(genes_txt, header=None)[0].str.upper().tolist()
-    gene_set = set(gene_list)
-
-    if var_column:
-        genes = adata.var[var_column].astype(str).str.upper()
-    else:
-        genes = adata.var_names.str.upper()
-
-    return torch.tensor([g in gene_set for g in genes], dtype=torch.bool)
-
-    # Example usage:
-    # Load cell cycle mask from the provided GO annotation file
-    # cycle_mask = create_cell_cycle_gene_mask(adata, "GO_cell_cycle_annotation_human.txt")
-
-
 # ─────────────────────────────────────────────────────────────
 # Cell Cycle Registry Keys
 # ─────────────────────────────────────────────────────────────
@@ -343,7 +303,6 @@ class DecoderCycleVI(nn.Module):
         use_batch_norm (bool): Whether to apply batch normalization.
         use_layer_norm (bool): Whether to apply layer normalization.
         scale_activation (str): 'softmax' or 'softplus' for output.
-        cycle_gene_mask (torch.Tensor): Boolean mask over cycle-regulated genes.
         n_fourier (int): Number of Fourier harmonics for cyclic signal.
     """
 
@@ -358,18 +317,11 @@ class DecoderCycleVI(nn.Module):
         use_batch_norm: bool = False,
         use_layer_norm: bool = False,
         scale_activation: str = "softmax",
-        cycle_gene_mask: torch.Tensor = None,
         n_fourier: int = 3,
         **kwargs
     ):
         super().__init__()
 
-        if cycle_gene_mask is None:
-            cycle_gene_mask = torch.ones(n_output, dtype=torch.bool)
-        elif cycle_gene_mask.shape[0] != n_output:
-            raise ValueError("`cycle_gene_mask` must match n_output")
-
-        self.register_buffer("cycle_mask", cycle_gene_mask.float())
         self.n_output = n_output
         self.n_fourier = n_fourier
 
@@ -391,11 +343,6 @@ class DecoderCycleVI(nn.Module):
 
         # Fourier weights for periodic expression modulation
         self.fourier_W = nn.Parameter(0.01 * torch.randn(2 * n_fourier, n_output))
-
-        # Gradient mask so only cycle genes get updated via Fourier weights
-        grad_mask = torch.zeros_like(self.fourier_W)
-        grad_mask[:, cycle_gene_mask] = 1.0
-        self.fourier_W.register_hook(lambda grad: grad * grad_mask.to(grad.device))
 
         # Raw dispersion parameter for Negative Binomial model
         self.disp_raw = nn.Parameter(0.01 * torch.randn(n_output))
@@ -436,7 +383,7 @@ class DecoderCycleVI(nn.Module):
                 torch.sin(k * angle) for k in range(1, self.n_fourier + 1)
             ]
             fourier_basis = torch.stack(basis, dim=-1)  # shape: [N, 2 * n_fourier]
-            cycle_effect = torch.matmul(fourier_basis, self.fourier_W) * self.cycle_mask
+            cycle_effect = torch.matmul(fourier_basis, self.fourier_W)
 
         # Combine non-cycle and cycle effects
         eta = non_cycle_out + cycle_effect  # shape: [N, n_output]
@@ -500,7 +447,6 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         extra_encoder_kwargs: dict | None = None,
         extra_decoder_kwargs: dict | None = None,
         batch_embedding_kwargs: dict | None = None,
-        cycle_gene_mask: torch.Tensor | None = None,
     ):
         super().__init__()
 
@@ -592,7 +538,6 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
             use_layer_norm=use_ln_dec,
             inject_covariates=deeply_inject_covariates,
             scale_activation="softplus" if use_size_factor_key else "softmax",
-            cycle_gene_mask=cycle_gene_mask,
             **_extra_decoder_kwargs,
         )
 
@@ -1116,7 +1061,6 @@ class CycleVI(EmbeddingMixin,
         dispersion: Literal[...] = "gene-label", # How to parameterize dispersion (per gene, per cell, etc.)
         gene_likelihood: Literal[...] = "nb",    # Likelihood distribution for gene expression (usually Negative Binomial)
         latent_distribution: Literal[...] = "normal",  # Latent distribution type
-        cycle_gene_mask: torch.Tensor | None = None, # Boolean mask marking cycle genes for disentanglement (usually none)
         **kwargs,                      # Any other parameters passed to the VAE
     ):
 
@@ -1132,7 +1076,6 @@ class CycleVI(EmbeddingMixin,
             "dispersion": dispersion,
             "gene_likelihood": gene_likelihood,
             "latent_distribution": latent_distribution,
-            "cycle_gene_mask": cycle_gene_mask,
             **kwargs,
         }
 
@@ -1141,7 +1084,7 @@ class CycleVI(EmbeddingMixin,
             "CycleVI model with the following parameters: \n"
             f"n_hidden: {n_hidden}, n_latent: {n_latent}, n_layers: {n_layers}, "
             f"dropout_rate: {dropout_rate}, dispersion: {dispersion}, "
-            f"gene_likelihood: {gene_likelihood}, latent_distribution: {latent_distribution}, cycle_gene_mask: {cycle_gene_mask} "
+            f"gene_likelihood: {gene_likelihood}, latent_distribution: {latent_distribution} "
         )
 
         # If lazy initialization is enabled (adata is not provided), postpone model creation until training
@@ -1201,7 +1144,6 @@ class CycleVI(EmbeddingMixin,
                 use_size_factor_key=use_size_factor_key,        # whether to use size factors
                 library_log_means=library_log_means,            # init mean for library size prior
                 library_log_vars=library_log_vars,              # init variance for library size prior
-                cycle_gene_mask=cycle_gene_mask,                # pass your custom mask for cycle genes
                 **kwargs,                                       # forward any additional arguments
             )
 

@@ -5,7 +5,6 @@ from cyclevi.model import (
     DecoderCycleVI,
     PhaseAdversarialTrainingPlan,
     Classifier,
-    create_cell_cycle_gene_mask,
 )
 from importlib.resources import files as _files
 
@@ -22,6 +21,5 @@ __all__ = [
     "DecoderCycleVI",
     "PhaseAdversarialTrainingPlan",
     "Classifier",
-    "create_cell_cycle_gene_mask",
     "get_cc_genes_path",
 ]
