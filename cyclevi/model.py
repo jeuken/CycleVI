@@ -450,6 +450,12 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
     ):
         super().__init__()
 
+        if n_latent < 3:
+            raise ValueError(
+                "n_latent must be at least 3: two dimensions are reserved for "
+                "z_cycle and at least one is required for z_other."
+            )
+
         # Store core configuration
         self.dispersion = dispersion
         self.n_latent = n_latent
@@ -1078,6 +1084,12 @@ class CycleVI(EmbeddingMixin,
         latent_distribution: Literal[...] = "normal",  # Latent distribution type
         **kwargs,                      # Any other parameters passed to the VAE
     ):
+
+        if n_latent < 3:
+            raise ValueError(
+                "n_latent must be at least 3: two dimensions are reserved for "
+                "z_cycle and at least one is required for z_other."
+            )
 
         # Call the constructor of the parent mixin/base classes
         super().__init__(adata)
