@@ -33,7 +33,7 @@ Before running anything, make sure your data meets these expectations:
 
 - **Raw counts**, not normalized or log-transformed values. CycleVI models counts directly; the matrix should contain integer-like UMI/read counts.
 - **Cells as rows, genes as columns** (the standard AnnData orientation). If your matrix is the other way round, add `--transpose`.
-- **Gene names as `var_names`** — either gene symbols (e.g. `MKI67`) or Ensembl IDs (e.g. `ENSG00000148773`) work automatically, and CycleVI detects which one you and matches the correct built-in cell cycle marker list. Human data works out of the box; for other organisms, or other gene ID schemes, supply your own marker lists (see [`prepare`](#cyclevi-prepare)).
+- **Gene names as `var_names`** — either gene symbols (e.g. `MKI67`) or Ensembl IDs (e.g. `ENSG00000148773`) work automatically. CycleVI detects which identifier type you use and selects the corresponding built-in cell-cycle marker list. Human data works out of the box; for other organisms, or other gene ID schemes, supply your own marker lists (see [`prepare`](#cyclevi-prepare)).
 
 Standard quality-control filtering (removing low-count cells and rarely-expressed genes) before running CycleVI is recommended, just as for any scRNA-seq workflow.
 
@@ -199,11 +199,11 @@ If the file came from `cyclevi prepare`, no extra flags are needed — the count
 | `--output` | — | Output directory |
 | `--batch-key` | `None` | `adata.obs` column for experimental batch (enables batch correction). |
 | `--labels-key` | `None` | `adata.obs` column for cell type labels. |
-| `--size-factor-key` | `None` | `adata.obs` column containing positive per-cell size factors. When provided, CycleVI uses the factor instead of observed library size for encoder normalization and decoder scaling. The expected convention is normalized_expression = raw_counts / size_factor. Larger values indicate that the same underlying expression is expected to generate more observed counts, for example because of greater sequencing depth, capture efficiency, or amplification efficiency; smaller values indicate fewer expected counts. |
+| `--size-factor-key` | `None` | `adata.obs` column containing positive, unlogged per-cell size factors on their original scale. When provided, CycleVI uses the factor instead of observed library size for encoder normalization and decoder scaling. The expected convention is normalized_expression = raw_counts / size_factor. Larger values indicate that the same underlying expression is expected to generate more observed counts, for example because of greater sequencing depth, capture efficiency, or amplification efficiency; smaller values indicate fewer expected counts. |
 | `--cycle-label-key` | auto | `adata.obs` column for phase labels — read from the file if prepared with `cyclevi prepare`. |
 | `--cycle-angle-key` | auto | `adata.obs` column for cycle angle — read from the file if prepared with `cyclevi prepare`. |
 | `--layer` | auto | AnnData layer with raw counts — read from the file if prepared with `cyclevi prepare`. |
-| `--n-latent` | `10` | Total latent dimensions (the first 2 are always `z_cycle`). |
+| `--n-latent` | `10` | Total latent dimensions; must be at least 3. The first 2 are reserved for `z_cycle`. |
 | `--n-hidden` | `128` | Hidden units per encoder/decoder layer. |
 | `--n-layers` | `1` | Number of encoder/decoder layers. |
 | `--n-epochs` | `400` | Training epochs. |
@@ -267,7 +267,7 @@ z_other = z[:, 2:]                        # cell cycle-free embedding
 angles  = np.arctan2(z[:, 1], z[:, 0])    # cell cycle angle per cell
 ```
 
-To use per-cell size factors rather than the observed library size, store positive values in `adata.obs`
+To use per-cell size factors rather than the observed library size, store positive, unlogged values on their original scale in `adata.obs`
 and pass the column name during setup:
 
 ```python
