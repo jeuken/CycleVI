@@ -199,6 +199,7 @@ If the file came from `cyclevi prepare`, no extra flags are needed — the count
 | `--output` | — | Output directory |
 | `--batch-key` | `None` | `adata.obs` column for experimental batch (enables batch correction). |
 | `--labels-key` | `None` | `adata.obs` column for cell type labels. |
+| `--size-factor-key` | `None` | `adata.obs` column containing positive per-cell size factors. When provided, CycleVI uses the factor instead of observed library size for encoder normalization and decoder scaling. The expected convention is normalized_expression = raw_counts / size_factor. Larger values indicate that the same underlying expression is expected to generate more observed counts, for example because of greater sequencing depth, capture efficiency, or amplification efficiency; smaller values indicate fewer expected counts. |
 | `--cycle-label-key` | auto | `adata.obs` column for phase labels — read from the file if prepared with `cyclevi prepare`. |
 | `--cycle-angle-key` | auto | `adata.obs` column for cycle angle — read from the file if prepared with `cyclevi prepare`. |
 | `--layer` | auto | AnnData layer with raw counts — read from the file if prepared with `cyclevi prepare`. |
@@ -264,6 +265,21 @@ z = model.get_latent_representation(adata)
 z_cycle = z[:, :2]                        # 2D circular cell cycle coordinates
 z_other = z[:, 2:]                        # cell cycle-free embedding
 angles  = np.arctan2(z[:, 1], z[:, 0])    # cell cycle angle per cell
+```
+
+To use per-cell size factors rather than the observed library size, store positive values in `adata.obs`
+and pass the column name during setup:
+
+```python
+adata.obs["size_factor"] = size_factors
+CycleVI.setup_anndata(
+    adata,
+    layer="counts",
+    size_factor_key="size_factor",
+    cycle_initiation_label_key="phase",
+    cycle_initiation_angle_key="cycle_angle_uniform",
+)
+
 ```
 
 For a full walkthrough, see [`Tutorial.ipynb`](Tutorial.ipynb) or [`Tutorial_colab.ipynb`](Tutorial_colab.ipynb) (ready to run on Google Colab).

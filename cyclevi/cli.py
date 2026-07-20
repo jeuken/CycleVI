@@ -84,7 +84,7 @@ def _run_prepare(adata_obj, gene_id_type, counts_layer,
         _info(f"{phase:<4}  {n:>7,} cells  ({100 * n / len(adata_obj):4.1f} %)")
 
 
-def _run_train(adata_obj, batch_key, labels_key, layer, cycle_label_key,
+def _run_train(adata_obj, batch_key, labels_key, size_factor_key, layer, cycle_label_key,
                cycle_angle_key, n_latent, n_hidden, n_layers, n_epochs,
                batch_size, lr, output):
     from cyclevi.model import CycleVI
@@ -136,6 +136,7 @@ def _run_train(adata_obj, batch_key, labels_key, layer, cycle_label_key,
         layer=layer,
         batch_key=batch_key,
         labels_key=labels_key,
+        size_factor_key=size_factor_key,
         cycle_initiation_label_key=cycle_label_key,
         cycle_initiation_angle_key=cycle_angle_key,
     )
@@ -202,6 +203,9 @@ _TRAIN_OPTIONS = [
                  help="adata.obs column for experimental batch."),
     click.option("--labels-key", default=None,
                  help="adata.obs column for cell type labels."),
+    click.option("--size-factor-key", default=None,
+                 help="adata.obs column containing positive, unlogged per-cell "
+                      "size factors."),
     click.option("--cycle-label-key", default=None,
                  help="adata.obs column for discrete phase labels (G1/S/G2M). "
                       "Read automatically from a prepared file if not set."),
@@ -256,7 +260,7 @@ def cli():
 @_add_options(_TRAIN_OPTIONS)
 def run(input_path, output, gene_id_type, s_genes_file, g2m_genes_file,
         var_names, transpose,
-        batch_key, labels_key, cycle_label_key, cycle_angle_key, layer,
+        batch_key, labels_key, size_factor_key, cycle_label_key, cycle_angle_key, layer,
         n_latent, n_hidden, n_layers, n_epochs, batch_size, lr):
     """Prepare data, train a model, and save all outputs in one step.
 
@@ -283,7 +287,8 @@ def run(input_path, output, gene_id_type, s_genes_file, g2m_genes_file,
                  s_genes_file=s_genes_file, g2m_genes_file=g2m_genes_file)
 
     _section("Training")
-    _run_train(adata_obj, batch_key, labels_key, layer, cycle_label_key, cycle_angle_key,
+    _run_train(adata_obj, batch_key, labels_key, size_factor_key, layer,
+               cycle_label_key, cycle_angle_key,
                n_latent, n_hidden, n_layers, n_epochs, batch_size, lr, output)
 
     _section("Done")
@@ -353,7 +358,7 @@ def prepare(input_path, output, gene_id_type, s_genes_file, g2m_genes_file,
               help="Output directory.")
 @_add_options(_TRAIN_OPTIONS)
 def train(input_path, output,
-          batch_key, labels_key, cycle_label_key, cycle_angle_key, layer,
+          batch_key, labels_key, size_factor_key, cycle_label_key, cycle_angle_key, layer,
           n_latent, n_hidden, n_layers, n_epochs, batch_size, lr):
     """Train a CycleVI model from a prepared .h5ad file.
 
@@ -375,7 +380,8 @@ def train(input_path, output,
     _ok(f"{adata_obj.n_obs:,} cells  ×  {adata_obj.n_vars:,} genes")
 
     _section("Training")
-    _run_train(adata_obj, batch_key, labels_key, layer, cycle_label_key, cycle_angle_key,
+    _run_train(adata_obj, batch_key, labels_key, size_factor_key, layer,
+               cycle_label_key, cycle_angle_key,
                n_latent, n_hidden, n_layers, n_epochs, batch_size, lr, output)
 
     _section("Done")

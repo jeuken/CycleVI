@@ -569,6 +569,7 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
                 MODULE_KEYS.BATCH_INDEX_KEY: tensors[REGISTRY_KEYS.BATCH_KEY],
                 MODULE_KEYS.CONT_COVS_KEY: tensors.get(REGISTRY_KEYS.CONT_COVS_KEY, None),
                 MODULE_KEYS.CAT_COVS_KEY: tensors.get(REGISTRY_KEYS.CAT_COVS_KEY, None),
+                MODULE_KEYS.SIZE_FACTOR_KEY: tensors.get(REGISTRY_KEYS.SIZE_FACTOR_KEY, None),
             }
         else:
             # For minified data, use cached latent parameters
@@ -644,14 +645,26 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         batch_index: torch.Tensor,
         cont_covs: torch.Tensor | None = None,
         cat_covs: torch.Tensor | None = None,
+        size_factor: torch.Tensor | None = None,
         n_samples: int = 1,
     ) -> dict[str, torch.Tensor | Distribution | None]:
-        """Run the regular inference process with normalization by library size."""
+        """Run inference after normalizing counts by the configured expression scale."""
         # Step 1: Compute observed library size (sum over genes per cell)
         library = torch.sum(x, dim=1, keepdim=True)  # shape [N, 1]
 
-        # Step 2: Normalize expression per cell
-        x_normalized = x / (library + 1e-8)  # Add small epsilon to avoid division by zero
+        # Step 2: Normalize by a supplied size factor, or by observed library size.
+        if self.use_size_factor_key:
+            if size_factor is None:
+                raise ValueError(
+                    "A size factor key was registered, but no size-factor values "
+                    "were provided to the model."
+                )
+            normalization_factor = size_factor
+        else:
+            # Preserve the original no-size-factor behavior exactly.
+            normalization_factor = library + 1e-8
+
+        x_normalized = x / normalization_factor
 
         # Step 3: Apply log1p for numerical stability if enabled
         if self.log_variational:
@@ -1191,6 +1204,23 @@ class CycleVI(EmbeddingMixin,
           - phase labels -> CYCLE_REGISTRY_KEYS.CYCLE_LABEL_KEY
           - phase angle  -> CYCLE_REGISTRY_KEYS.CYCLE_ANGLE_KEY
         """
+
+        if size_factor_key is not None:
+            if size_factor_key not in adata.obs:
+                raise KeyError(
+                    f"size_factor_key '{size_factor_key}' was not found in adata.obs."
+                )
+
+            size_factors = pd.to_numeric(
+                adata.obs[size_factor_key], errors="coerce"
+            ).to_numpy(dtype=float)
+            if not np.all(np.isfinite(size_factors)):
+                raise ValueError("Size factors must be numeric and finite.")
+            if np.any(size_factors <= 0):
+                raise ValueError(
+                    "Size factors must be strictly positive values on their original "
+                    "(unlogged) scale."
+                )
 
         setup_method_args = cls._get_setup_method_args(**locals())
 
