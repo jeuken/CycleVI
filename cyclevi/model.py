@@ -16,7 +16,6 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 from torch.distributions import Distribution, Normal
-from torch.nn.functional import one_hot
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 # Single-cell analysis tools
@@ -37,7 +36,6 @@ from scvi.data.fields import (
 from scvi.distributions._utils import DistributionConcatenator
 from scvi.model._utils import (
     _get_batch_code_from_category,
-    _init_library_size,
     scrna_raw_counts_properties,
 )
 from scvi.model.base import (
@@ -416,7 +414,7 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
     This model extends the standard scVI architecture by incorporating:
     - A disentangled 2D circular latent space for modeling the cell cycle.
     - A custom decoder with Fourier basis functions for periodic expression.
-    - Support for batch correction, observed and latent library sizes, and covariates.
+    - Support for batch correction, observed library sizes, size factors, and covariates.
     """
 
     def __init__(
@@ -438,9 +436,6 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         use_batch_norm: Literal["encoder", "decoder", "none", "both"] = "both",
         use_layer_norm: Literal["encoder", "decoder", "none", "both"] = "none",
         use_size_factor_key: bool = False,
-        use_observed_lib_size: bool = True,
-        library_log_means: np.ndarray | None = None,
-        library_log_vars: np.ndarray | None = None,
         var_activation: Callable[[torch.Tensor], torch.Tensor] = None,
         extra_encoder_kwargs: dict | None = None,
         extra_decoder_kwargs: dict | None = None,
@@ -462,14 +457,6 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         self.latent_distribution = latent_distribution
         self.encode_covariates = encode_covariates
         self.use_size_factor_key = use_size_factor_key
-        self.use_observed_lib_size = use_size_factor_key or use_observed_lib_size
-
-        # Handle library size modeling if not using observed values
-        if not self.use_observed_lib_size:
-            if library_log_means is None or library_log_vars is None:
-                raise ValueError("Must provide library_log_means and library_log_vars if not using observed lib size.")
-            self.register_buffer("library_log_means", torch.from_numpy(library_log_means).float())
-            self.register_buffer("library_log_vars", torch.from_numpy(library_log_vars).float())
 
         # ─────────────────────────────────────────────────────────────
         # Setup batch representation
@@ -607,34 +594,6 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
 
         }
 
-    # ─────────────────────────────────────────────────────────────
-    # For each cell, computes the mean and variance of the log library size for the corresponding batch.
-    # ─────────────────────────────────────────────────────────────
-
-    def _compute_local_library_params(
-        self,
-        batch_index: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Computes local library parameters.
-
-        For each cell, computes the mean and variance of the log library size
-        for the corresponding batch.
-        """
-        from torch.nn.functional import linear
-
-        n_batch = self.library_log_means.shape[1]  # Number of batches from the library means buffer
-        # Compute local means using one-hot encoding for the batch index and linear transformation
-        local_library_log_means = linear(
-            one_hot(batch_index.squeeze(-1), n_batch).float(), self.library_log_means
-        )
-        # Compute local variances similarly
-        local_library_log_vars = linear(
-            one_hot(batch_index.squeeze(-1), n_batch).float(), self.library_log_vars
-        )
-
-        return local_library_log_means, local_library_log_vars
-
     @auto_move_data  # Automatically move inputs/outputs to the correct device (CPU/GPU)
 
     # ─────────────────────────────────────────────────────────────
@@ -690,26 +649,18 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         else:
             qz, z = self.z_encoder(encoder_input, batch_index, *categorical_input)
 
-        # If you're not using observed_lib_size, compute encoded one
-        ql = None
-        if not self.use_observed_lib_size:
-            if self.batch_representation == "embedding":
-                ql, library_encoded = self.l_encoder(encoder_input, *categorical_input)
-            else:
-                ql, library_encoded = self.l_encoder(encoder_input, batch_index, *categorical_input)
-            library = library_encoded
-
         # Expand for MC sampling if needed
         if n_samples > 1:
             untran_z = qz.sample((n_samples,))
             z = self.z_encoder.z_transformation(untran_z)
-            library = library.unsqueeze(0).expand((n_samples, library.size(0), library.size(1))) \
-                      if self.use_observed_lib_size else ql.sample((n_samples,))
+            library = library.unsqueeze(0).expand(
+                (n_samples, library.size(0), library.size(1))
+            )
 
         return {
             MODULE_KEYS.Z_KEY: z,
             MODULE_KEYS.QZ_KEY: qz,
-            MODULE_KEYS.QL_KEY: ql,
+            MODULE_KEYS.QL_KEY: None,
             MODULE_KEYS.LIBRARY_KEY: torch.log(library + 1e-8),  # used in decoder
         }
 
@@ -823,17 +774,11 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
 
         px = NegativeBinomial(mu=px_rate, theta=px_r, scale=px_scale)
 
-        if self.use_observed_lib_size:
-            pl = None
-        else:
-            local_library_log_means, local_library_log_vars = self._compute_local_library_params(batch_index)
-            pl = Normal(local_library_log_means, local_library_log_vars.sqrt())
-
         pz = Normal(torch.zeros_like(z), torch.ones_like(z))
 
         return {
             MODULE_KEYS.PX_KEY: px,
-            MODULE_KEYS.PL_KEY: pl,
+            MODULE_KEYS.PL_KEY: None,
             MODULE_KEYS.PZ_KEY: pz,
             "angle": angle,
         }
@@ -859,13 +804,8 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
             inference_outputs[MODULE_KEYS.QZ_KEY], generative_outputs[MODULE_KEYS.PZ_KEY]
         ).sum(dim=-1)
 
-        # KL for library size
-        if not self.use_observed_lib_size:
-            kl_divergence_l = kl_divergence(
-                inference_outputs[MODULE_KEYS.QL_KEY], generative_outputs[MODULE_KEYS.PL_KEY]
-            ).sum(dim=1)
-        else:
-            kl_divergence_l = torch.zeros_like(kl_divergence_z)
+        # Observed library sizes and supplied size factors have no latent KL term.
+        kl_divergence_l = torch.zeros_like(kl_divergence_z)
 
         # Reconstruction loss
         reconst_loss = -generative_outputs[MODULE_KEYS.PX_KEY].log_prob(x).sum(-1)
@@ -969,8 +909,6 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         from torch import logsumexp
         from torch.distributions import Normal
 
-        batch_index = tensors[REGISTRY_KEYS.BATCH_KEY]
-
         to_sum = []  # List to accumulate log probabilities over multiple passes
         if n_mc_samples_per_pass > n_mc_samples:
             warnings.warn(
@@ -989,9 +927,7 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
                 get_inference_input_kwargs={"full_forward_pass": True},
             )
             qz = inference_outputs[MODULE_KEYS.QZ_KEY]
-            ql = inference_outputs[MODULE_KEYS.QL_KEY]
             z = inference_outputs[MODULE_KEYS.Z_KEY]
-            library = inference_outputs[MODULE_KEYS.LIBRARY_KEY]
 
             # Get the reconstruction loss from the losses output
             reconst_loss = losses.dict_sum(losses.reconstruction_loss)
@@ -1004,16 +940,6 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
             q_z_x = qz.log_prob(z).sum(dim=-1)
             log_prob_sum = p_z + p_x_zl - q_z_x
 
-            if not self.use_observed_lib_size:
-                # Compute additional log probabilities for library size if not observed
-                local_library_log_means, local_library_log_vars = self._compute_local_library_params(batch_index)
-                p_l = (
-                    Normal(local_library_log_means, local_library_log_vars.sqrt())
-                    .log_prob(library)
-                    .sum(dim=-1)
-                )
-                q_l_x = ql.log_prob(library).sum(dim=-1)
-                log_prob_sum += p_l - q_l_x
             if n_mc_samples_per_pass == 1:
                 log_prob_sum = log_prob_sum.unsqueeze(0)
 
@@ -1117,17 +1043,6 @@ class CycleVI(EmbeddingMixin,
             # Check if per-cell size factors are already stored in the AnnData registry
             use_size_factor_key = REGISTRY_KEYS.SIZE_FACTOR_KEY in self.adata_manager.data_registry
 
-            # Initialize library size parameters if needed
-            library_log_means, library_log_vars = None, None
-            if (
-                not use_size_factor_key
-                and self.minified_data_type != ADATA_MINIFY_TYPE.LATENT_POSTERIOR
-            ):
-                library_log_means, library_log_vars = _init_library_size(
-                    self.adata_manager, n_batch
-                )
-
-
             # ─────────────────────────────────────────────
             # Instantiate the VAE
             # ─────────────────────────────────────────────
@@ -1143,8 +1058,6 @@ class CycleVI(EmbeddingMixin,
                 dropout_rate=dropout_rate,                      # dropout probability
                 latent_distribution=latent_distribution,        # prior distribution for z
                 use_size_factor_key=use_size_factor_key,        # whether to use size factors
-                library_log_means=library_log_means,            # init mean for library size prior
-                library_log_vars=library_log_vars,              # init variance for library size prior
                 **kwargs,                                       # forward any additional arguments
             )
 
