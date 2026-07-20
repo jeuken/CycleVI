@@ -758,6 +758,12 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         remove_cell_cycle: bool = False,
     ):
         from scvi.distributions import NegativeBinomial, Normal, Poisson, ZeroInflatedNegativeBinomial
+
+        # Counterfactual decoding must replace the batch before batch embeddings
+        # or one-hot categorical inputs are constructed.
+        if transform_batch is not None:
+            batch_index = torch.ones_like(batch_index) * transform_batch
+
         # 1. Build decoder_input = [z (+ cont_covs)]
         if cont_covs is None:
             decoder_input = z
@@ -788,15 +794,11 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         if self.batch_representation == "one-hot":
             categorical_input = (batch_index, *categorical_input)
 
-        # 4. Handle transform_batch (same as scVI: override batch_index used for dispersion/priors)
-        if transform_batch is not None:
-            batch_index = torch.ones_like(batch_index) * transform_batch
-
-        # 5. size_factor / library handling
+        # 4. size_factor / library handling
         if not self.use_size_factor_key:
             size_factor = library  # scVI uses observed lib size unless overridden
 
-        # 6. Run the decoder
+        # 5. Run the decoder
         (
             px_scale,
             disp,
