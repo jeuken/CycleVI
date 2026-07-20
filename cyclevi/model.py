@@ -430,7 +430,6 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         n_continuous_cov: int = 0,
         n_cats_per_cov: list[int] | None = None,
         dropout_rate: float = 0.1,
-        dispersion: Literal["gene", "gene-batch", "gene-label", "gene-cell"] = "gene-label",
         log_variational: bool = True,
         latent_distribution: Literal["normal", "ln"] = "normal",
         encode_covariates: bool = False,
@@ -456,7 +455,6 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
             )
 
         # Store core configuration
-        self.dispersion = dispersion
         self.n_latent = n_latent
         self.log_variational = log_variational
         self.n_batch = n_batch
@@ -1060,7 +1058,6 @@ class CycleVI(EmbeddingMixin,
         n_latent: int = 10,            # Dimensionality of latent space
         n_layers: int = 1,             # Number of layers in encoder/decoder neural networks
         dropout_rate: float = 0.1,     # Dropout rate
-        dispersion: Literal[...] = "gene-label", # How to parameterize dispersion (per gene, per cell, etc.)
         latent_distribution: Literal[...] = "normal",  # Latent distribution type
         **kwargs,                      # Any other parameters passed to the VAE
     ):
@@ -1080,7 +1077,6 @@ class CycleVI(EmbeddingMixin,
             "n_latent": n_latent,
             "n_layers": n_layers,
             "dropout_rate": dropout_rate,
-            "dispersion": dispersion,
             "latent_distribution": latent_distribution,
             **kwargs,
         }
@@ -1089,7 +1085,7 @@ class CycleVI(EmbeddingMixin,
         self._model_summary_string = (
             "CycleVI model with the following parameters: \n"
             f"n_hidden: {n_hidden}, n_latent: {n_latent}, n_layers: {n_layers}, "
-            f"dropout_rate: {dropout_rate}, dispersion: {dispersion}, "
+            f"dropout_rate: {dropout_rate}, dispersion: gene, "
             f"observation_likelihood: negative binomial, "
             f"latent_distribution: {latent_distribution} "
         )
@@ -1145,7 +1141,6 @@ class CycleVI(EmbeddingMixin,
                 n_latent=n_latent,                              # latent dimension
                 n_layers=n_layers,                              # number of layers
                 dropout_rate=dropout_rate,                      # dropout probability
-                dispersion=dispersion,                          # dispersion parameterization mode
                 latent_distribution=latent_distribution,        # prior distribution for z
                 use_size_factor_key=use_size_factor_key,        # whether to use size factors
                 library_log_means=library_log_means,            # init mean for library size prior
