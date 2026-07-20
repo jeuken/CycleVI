@@ -2,9 +2,8 @@
 # Imports
 # ─────────────────────────────────────────────────────────────
 
-import logging
 import warnings
-from collections.abc import Iterator, Iterable
+from collections.abc import Iterable, Iterator
 from functools import partial
 from numbers import Number
 from typing import Callable, Literal
@@ -66,16 +65,6 @@ from scvi.utils import (
 )
 
 # ─────────────────────────────────────────────────────────────
-# Helpers
-# ─────────────────────────────────────────────────────────────
-
-def _identity(x):
-    return x
-
-# Logger setup
-logger = logging.getLogger(__name__)
-
-# ─────────────────────────────────────────────────────────────
 # Cell Cycle Registry Keys
 # ─────────────────────────────────────────────────────────────
 
@@ -134,7 +123,7 @@ class PhaseAdversarialTrainingPlan(TrainingPlan):
         optimizer_creator=None,
         lr: float = 1e-3,
         weight_decay: float = 1e-6,
-        n_steps_kl_warmup: int = None,
+        n_steps_kl_warmup: int | None = None,
         n_epochs_kl_warmup: int = 400,
         reduce_lr_on_plateau: bool = False,
         lr_factor: float = 0.6,
@@ -310,7 +299,7 @@ class DecoderCycleVI(nn.Module):
         n_output: int,
         n_layers: int = 1,
         n_hidden: int = 128,
-        n_cat_list: Iterable[int] = None,
+        n_cat_list: Iterable[int] | None = None,
         inject_covariates: bool = True,
         use_batch_norm: bool = False,
         use_layer_norm: bool = False,
@@ -362,8 +351,7 @@ class DecoderCycleVI(nn.Module):
         z_latent = z[..., 2:]
 
         # Feedforward decoder for baseline gene expression
-        x_input = z_latent
-        x = self.non_cycle_fc(x_input,*cat_list)
+        x = self.non_cycle_fc(z_latent, *cat_list)
         non_cycle_out = self.non_cycle_linear(x)
 
         # Convert 2D z_cycle into phase angle θ
@@ -386,7 +374,7 @@ class DecoderCycleVI(nn.Module):
         # Combine non-cycle and cycle effects
         eta = non_cycle_out + cycle_effect  # shape: [N, n_output]
 
-        # Output gene proportions (scale) and rate
+        # Produce positive gene scales and expected count rates.
         px_scale = self.px_scale_activation(eta)         # [N, G]
         px_rate = torch.exp(library) * px_scale          # scaled by library size
         disp = self.disp_raw                              # [G]
@@ -436,7 +424,7 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         use_batch_norm: Literal["encoder", "decoder", "none", "both"] = "both",
         use_layer_norm: Literal["encoder", "decoder", "none", "both"] = "none",
         use_size_factor_key: bool = False,
-        var_activation: Callable[[torch.Tensor], torch.Tensor] = None,
+        var_activation: Callable[[torch.Tensor], torch.Tensor] | None = None,
         extra_encoder_kwargs: dict | None = None,
         extra_decoder_kwargs: dict | None = None,
         batch_embedding_kwargs: dict | None = None,
@@ -672,7 +660,7 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         qzv: torch.Tensor,          # Cached latent variance values
         observed_lib_size: torch.Tensor,  # Observed library size values
         n_samples: int = 1,         # Number of samples for Monte Carlo approximation
-    ) -> dict[str, torch.Tensor | None]:
+    ) -> dict[str, torch.Tensor | Distribution | None]:
         """Run the cached inference process."""
 
         # Reconstruct the latent distribution using the cached parameters
@@ -700,16 +688,16 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
     # ─────────────────────────────────────────────────────────────
     def generative(
         self,
-        z,
-        library,
-        batch_index,
-        cont_covs=None,
-        cat_covs=None,
-        size_factor=None,
-        y=None,
-        transform_batch=None,
+        z: torch.Tensor,
+        library: torch.Tensor,
+        batch_index: torch.Tensor,
+        cont_covs: torch.Tensor | None = None,
+        cat_covs: torch.Tensor | None = None,
+        size_factor: torch.Tensor | None = None,
+        y: torch.Tensor | None = None,
+        transform_batch: int | None = None,
         remove_cell_cycle: bool = False,
-    ):
+    ) -> dict[str, Distribution | torch.Tensor | None]:
         from scvi.distributions import NegativeBinomial
 
         # Counterfactual decoding must replace the batch before batch embeddings
@@ -758,11 +746,11 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
             px_rate,
             _,
             angle,
-            radius,
             _,
-            W_fourier,
             _,
-            baseline,
+            _,
+            _,
+            _,
         ) = self.decoder(
             decoder_input,
             size_factor,
@@ -904,7 +892,7 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         n_mc_samples: int,  # Total number of Monte Carlo samples for estimation
         return_mean: bool = False,  # Whether to return the mean marginal likelihood over cells
         n_mc_samples_per_pass: int = 1,  # Number of samples per computation pass (to reduce memory usage)
-    ):
+    ) -> torch.Tensor | float:
         """Compute the marginal log-likelihood of the data under the model."""
         from torch import logsumexp
         from torch.distributions import Normal
@@ -984,7 +972,7 @@ class CycleVI(EmbeddingMixin,
         n_latent: int = 10,            # Dimensionality of latent space
         n_layers: int = 1,             # Number of layers in encoder/decoder neural networks
         dropout_rate: float = 0.1,     # Dropout rate
-        latent_distribution: Literal[...] = "normal",  # Latent distribution type
+        latent_distribution: Literal["normal", "ln"] = "normal",  # Latent distribution type
         **kwargs,                      # Any other parameters passed to the VAE
     ):
 
@@ -1161,7 +1149,7 @@ class CycleVI(EmbeddingMixin,
         gene_list: list[str] | None = None,
         library_size: float | Literal["latent"] = 1,
         n_samples: int = 1,
-        n_samples_overall: int = None,
+        n_samples_overall: int | None = None,
         weights: Literal["uniform", "importance"] | None = None,
         batch_size: int | None = None,
         return_mean: bool = True,
