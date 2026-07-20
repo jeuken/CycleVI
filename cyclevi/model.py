@@ -432,7 +432,6 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         dropout_rate: float = 0.1,
         dispersion: Literal["gene", "gene-batch", "gene-label", "gene-cell"] = "gene-label",
         log_variational: bool = True,
-        gene_likelihood: Literal["zinb", "nb", "poisson"] = "nb",
         latent_distribution: Literal["normal", "ln"] = "normal",
         encode_covariates: bool = False,
         deeply_inject_covariates: bool = True,
@@ -460,7 +459,6 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         self.dispersion = dispersion
         self.n_latent = n_latent
         self.log_variational = log_variational
-        self.gene_likelihood = gene_likelihood
         self.n_batch = n_batch
         self.n_labels = n_labels
         self.latent_distribution = latent_distribution
@@ -763,7 +761,7 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         transform_batch=None,
         remove_cell_cycle: bool = False,
     ):
-        from scvi.distributions import NegativeBinomial, Normal, Poisson, ZeroInflatedNegativeBinomial
+        from scvi.distributions import NegativeBinomial
 
         # Counterfactual decoding must replace the batch before batch embeddings
         # or one-hot categorical inputs are constructed.
@@ -825,14 +823,7 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
 
         px_r = torch.exp(disp)
 
-        if self.gene_likelihood == "zinb":
-            px = ZeroInflatedNegativeBinomial(mu=px_rate, theta=px_r, zi_logits=None, scale=px_scale)
-        elif self.gene_likelihood == "nb":
-            px = NegativeBinomial(mu=px_rate, theta=px_r, scale=px_scale)
-        elif self.gene_likelihood == "poisson":
-            px = Poisson(rate=px_rate, scale=px_scale)
-        elif self.gene_likelihood == "normal":
-            px = Normal(px_rate, px_r, normal_mu=px_scale)
+        px = NegativeBinomial(mu=px_rate, theta=px_r, scale=px_scale)
 
         if self.use_observed_lib_size:
             pl = None
@@ -936,7 +927,6 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         self,
         tensors: dict[str, torch.Tensor],  # Input tensors for sampling
         n_samples: int = 1,                  # Number of Monte Carlo samples to draw per observation
-        max_poisson_rate: float = 1e8,       # Maximum value to clip Poisson rate to avoid numerical issues
     ) -> torch.Tensor:
         r"""Generate predictive samples from the posterior predictive distribution.
 
@@ -947,8 +937,6 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         distribution :math:`q(z \mid x)` for a given observation, and then sampling from the
         likelihood :math:`p(\hat{x} \mid z)` for each of these.
         """
-        from scvi.distributions import Poisson
-
         inference_kwargs = {"n_samples": n_samples}
         # Run a forward pass to get generative outputs (without computing loss)
         _, generative_outputs = self.forward(
@@ -956,13 +944,6 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         )
 
         dist = generative_outputs[MODULE_KEYS.PX_KEY]
-        if self.gene_likelihood == "poisson":
-            # Handle potential issues on MPS devices by clamping the Poisson rate
-            dist = (
-                Poisson(torch.clamp(dist.rate.to("cpu"), max=max_poisson_rate))
-                if self.device.type == "mps"
-                else Poisson(torch.clamp(dist.rate, max=max_poisson_rate))
-            )
 
         # Draw samples from the likelihood distribution; shape depends on n_samples
         samples = dist.sample()
@@ -1080,7 +1061,6 @@ class CycleVI(EmbeddingMixin,
         n_layers: int = 1,             # Number of layers in encoder/decoder neural networks
         dropout_rate: float = 0.1,     # Dropout rate
         dispersion: Literal[...] = "gene-label", # How to parameterize dispersion (per gene, per cell, etc.)
-        gene_likelihood: Literal[...] = "nb",    # Likelihood distribution for gene expression (usually Negative Binomial)
         latent_distribution: Literal[...] = "normal",  # Latent distribution type
         **kwargs,                      # Any other parameters passed to the VAE
     ):
@@ -1101,7 +1081,6 @@ class CycleVI(EmbeddingMixin,
             "n_layers": n_layers,
             "dropout_rate": dropout_rate,
             "dispersion": dispersion,
-            "gene_likelihood": gene_likelihood,
             "latent_distribution": latent_distribution,
             **kwargs,
         }
@@ -1111,7 +1090,8 @@ class CycleVI(EmbeddingMixin,
             "CycleVI model with the following parameters: \n"
             f"n_hidden: {n_hidden}, n_latent: {n_latent}, n_layers: {n_layers}, "
             f"dropout_rate: {dropout_rate}, dispersion: {dispersion}, "
-            f"gene_likelihood: {gene_likelihood}, latent_distribution: {latent_distribution} "
+            f"observation_likelihood: negative binomial, "
+            f"latent_distribution: {latent_distribution} "
         )
 
         # If lazy initialization is enabled (adata is not provided), postpone model creation until training
@@ -1166,7 +1146,6 @@ class CycleVI(EmbeddingMixin,
                 n_layers=n_layers,                              # number of layers
                 dropout_rate=dropout_rate,                      # dropout probability
                 dispersion=dispersion,                          # dispersion parameterization mode
-                gene_likelihood=gene_likelihood,                # likelihood model
                 latent_distribution=latent_distribution,        # prior distribution for z
                 use_size_factor_key=use_size_factor_key,        # whether to use size factors
                 library_log_means=library_log_means,            # init mean for library size prior
