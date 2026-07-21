@@ -266,6 +266,7 @@ z_cycle = z[:, :2]                        # 2D circular cell cycle coordinates
 z_other = z[:, 2:]                        # cell cycle-free embedding
 angles  = np.arctan2(z[:, 1], z[:, 0])    # cell cycle angle per cell
 ```
+For a full walkthrough, see [`Tutorial.ipynb`](Tutorial.ipynb) or [`Tutorial_colab.ipynb`](Tutorial_colab.ipynb) (ready to run on Google Colab).
 
 ### Using external size factors
 
@@ -296,8 +297,6 @@ CycleVI.setup_anndata(
 ```
 
 To retain the original CycleVI behavior, omit `size_factor_key` or set it to `None`.
-
-For a full walkthrough, see [`Tutorial.ipynb`](Tutorial.ipynb) or [`Tutorial_colab.ipynb`](Tutorial_colab.ipynb) (ready to run on Google Colab).
 
 ---
 
