@@ -445,6 +445,7 @@ class CycleVI_VAE(EmbeddingModuleMixin, BaseMinifiedModeModuleClass):
         self.latent_distribution = latent_distribution
         self.encode_covariates = encode_covariates
         self.use_size_factor_key = use_size_factor_key
+        self.gene_likelihood = "nb"
 
         # ─────────────────────────────────────────────────────────────
         # Setup batch representation
