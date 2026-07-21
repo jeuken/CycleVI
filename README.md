@@ -199,7 +199,7 @@ If the file came from `cyclevi prepare`, no extra flags are needed — the count
 | `--output` | — | Output directory |
 | `--batch-key` | `None` | `adata.obs` column for experimental batch (enables batch correction). |
 | `--labels-key` | `None` | `adata.obs` column for cell type labels. |
-| `--size-factor-key` | `None` | `adata.obs` column containing positive, unlogged per-cell size factors on their original scale. When provided, CycleVI uses the factor instead of observed library size for encoder normalization and decoder scaling. The expected convention is normalized_expression = raw_counts / size_factor. Larger values indicate that the same underlying expression is expected to generate more observed counts, for example because of greater sequencing depth, capture efficiency, or amplification efficiency; smaller values indicate fewer expected counts. |
+| `--size-factor-key` | `None` | Optional `adata.obs` column containing positive, finite relative size factors. See [Using external size factors](#using-external-size-factors). |
 | `--cycle-label-key` | auto | `adata.obs` column for phase labels — read from the file if prepared with `cyclevi prepare`. |
 | `--cycle-angle-key` | auto | `adata.obs` column for cycle angle — read from the file if prepared with `cyclevi prepare`. |
 | `--layer` | auto | AnnData layer with raw counts — read from the file if prepared with `cyclevi prepare`. |
@@ -267,8 +267,22 @@ z_other = z[:, 2:]                        # cell cycle-free embedding
 angles  = np.arctan2(z[:, 1], z[:, 0])    # cell cycle angle per cell
 ```
 
-To use per-cell size factors rather than the observed library size, store positive, unlogged values on their original scale in `adata.obs`
-and pass the column name during setup:
+### Using external size factors
+
+By default, CycleVI uses each cell's observed library size for normalization. External size factors may be useful when an independent estimate of cell-specific technical yield is available, for example from spike-ins or estimated capture or amplification efficiencies.
+
+CycleVI uses the convention:
+
+```text
+normalized expression = raw counts / size factor
+```
+
+A larger factor therefore means that the same underlying expression is expected to produce more observed counts. Factors must be numeric, finite, and strictly positive.
+
+This option is still being tested. We expect it to work best when most values are within roughly one order of magnitude of 1. This keeps the initial expression rates at a suitable scale because the size-factor path uses an unconstrained softplus decoder. 
+
+
+Store the factors in `adata.obs` and pass the column name during setup:
 
 ```python
 adata.obs["size_factor"] = size_factors
@@ -279,8 +293,9 @@ CycleVI.setup_anndata(
     cycle_initiation_label_key="phase",
     cycle_initiation_angle_key="cycle_angle_uniform",
 )
-
 ```
+
+To retain the original CycleVI behavior, omit `size_factor_key` or set it to `None`.
 
 For a full walkthrough, see [`Tutorial.ipynb`](Tutorial.ipynb) or [`Tutorial_colab.ipynb`](Tutorial_colab.ipynb) (ready to run on Google Colab).
 
@@ -303,5 +318,3 @@ If you use CycleVI in a publication, please cite:
 > Pia Mozdzanowski, Marcel Tarbier, Gustavo S. Jeuken
 >
 > Bioinformatics, Volume 42, Issue 6, June 2026, btag372, https://doi.org/10.1093/bioinformatics/btag372
-</content>
-</invoke>
